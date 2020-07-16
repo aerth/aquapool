@@ -17,6 +17,9 @@
         </div>
         {{/if}}
         <div style="display: block;"><i class="fa fa-money"></i> Total Paid: <span>{{format-balance model.stats.paid}}</span></div>
+        <div style="display: block;"><i class="fa fa-money"></i> Last 24hr: <span>{{format-balance model.stats.paid24}}</span></div>
+        <div style="display: block;"><i class="fa fa-money"></i> Today: <span>{{format-balance model.stats.paidToday}}</span></div>
+        <div style="display: block;"><i class="fa fa-money"></i> Yesterday: <span>{{format-balance model.stats.paidYesterday}}</span></div>
       </div>
       <div class="col-md-4 stats">
         {{#if model.stats.lastShare}}

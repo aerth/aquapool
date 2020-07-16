@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	redis "gopkg.in/redis.v3"
 	"github.com/aquachain/open-aquachain-pool/util"
+	redis "gopkg.in/redis.v3"
 )
 
 type Config struct {
@@ -585,9 +585,13 @@ func (r *RedisClient) GetMinerStats(login string, maxPayments int64) (map[string
 		return nil, err
 	} else {
 		result, _ := cmds[0].(*redis.StringStringMapCmd).Result()
+
 		stats["stats"] = convertStringMap(result)
-		payments := convertPaymentsResults(cmds[1].(*redis.ZSliceCmd))
+		payments, paystats := convertPaymentsResults(cmds[1].(*redis.ZSliceCmd))
 		stats["payments"] = payments
+		stats["stats"].(map[string]interface{})["paid24"] = paystats["paid24"]
+		stats["stats"].(map[string]interface{})["paidToday"] = paystats["paidToday"]
+		stats["stats"].(map[string]interface{})["paidYesterday"] = paystats["paidYesterday"]
 		stats["paymentsTotal"] = cmds[2].(*redis.IntCmd).Val()
 		roundShares, _ := cmds[3].(*redis.StringCmd).Int64()
 		stats["roundShares"] = roundShares
@@ -689,9 +693,12 @@ func (r *RedisClient) CollectStats(smallWindow time.Duration, maxBlocks, maxPaym
 	stats["matured"] = matured
 	stats["maturedTotal"] = cmds[8].(*redis.IntCmd).Val()
 
-	payments := convertPaymentsResults(cmds[10].(*redis.ZSliceCmd))
+	payments, paystats := convertPaymentsResults(cmds[10].(*redis.ZSliceCmd))
 	stats["payments"] = payments
 	stats["paymentsTotal"] = cmds[9].(*redis.IntCmd).Val()
+	stats["paid24"] = paystats["paid24"]
+	stats["paidToday"] = paystats["paidToday"]
+	stats["paidYesterday"] = paystats["paidYesterday"]
 
 	totalHashrate, miners := convertMinersStats(window, cmds[1].(*redis.ZSliceCmd))
 	stats["miners"] = miners
@@ -939,11 +946,17 @@ func convertMinersStats(window int64, raw *redis.ZSliceCmd) (int64, map[string]M
 	return totalHashrate, miners
 }
 
-func convertPaymentsResults(raw *redis.ZSliceCmd) []map[string]interface{} {
+func convertPaymentsResults(raw *redis.ZSliceCmd) ([]map[string]interface{}, map[string]interface{}) {
 	var result []map[string]interface{}
+	var (
+		paidToday     int64
+		paidYesterday int64
+		paid24        int64
+	)
 	for _, v := range raw.Val() {
 		tx := make(map[string]interface{})
 		tx["timestamp"] = int64(v.Score)
+
 		fields := strings.Split(v.Member.(string), ":")
 		tx["tx"] = fields[0]
 		// Individual or whole payments row
@@ -953,7 +966,33 @@ func convertPaymentsResults(raw *redis.ZSliceCmd) []map[string]interface{} {
 			tx["address"] = fields[1]
 			tx["amount"], _ = strconv.ParseInt(fields[2], 10, 64)
 		}
+
+		now := time.Now().UTC()
+		todayStart := now.Truncate(time.Hour * 24)
+		yesterdayStart := todayStart.Add(time.Hour * -24)
+		tomorrowStart := todayStart.Add(time.Hour * 24)
+		isToday := func(t time.Time) bool {
+			return t.After(todayStart) && !t.After(tomorrowStart)
+		}
+		isYesterday := func(t time.Time) bool {
+			return t.After(yesterdayStart) && !t.After(todayStart)
+		}
+		t2 := time.Unix(tx["timestamp"].(int64), 0)
+		if isToday(t2) {
+			paidToday += tx["amount"].(int64)
+		}
+		if isYesterday(t2) {
+			paidYesterday += tx["amount"].(int64)
+		}
+		if time.Since(t2) < time.Hour*24 {
+			paid24 += tx["amount"].(int64)
+		}
 		result = append(result, tx)
 	}
-	return result
+	paystats := map[string]interface{}{
+		"paidToday":     paidToday,
+		"paidYesterday": paidYesterday,
+		"paid24":        paid24,
+	}
+	return result, paystats
 }
